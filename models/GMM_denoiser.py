@@ -1,24 +1,23 @@
 import joblib
 import torch as pt
-
+pt.set_grad_enabled(False)
 
 class GMMDenoiser:
     """
     A denoiser class that uses a GMM in order to denoise the patches
     """
 
-    def __init__(self, gmm_file, device, MAP: bool = True):
+    def __init__(self, pi, mu, sigma, device, MAP: bool = True):
         """
         Initializes the GMM denoiser
         :param gmm: the GMM model which should be used in order to denoise patches
         :param MAP: whether MAP denoisings are to be returned or posterior samples
         """
         super(GMMDenoiser).__init__()
-        sklearn_gmm = joblib.load(gmm_file)
-        self.pi = pt.from_numpy(sklearn_gmm.weights_).to(device)
-        self.mu = pt.from_numpy(sklearn_gmm.means_).to(device)
-        self.S = pt.from_numpy(sklearn_gmm.covariances_).to(device)
-        k, self._d = sklearn_gmm.means_.shape
+        self.pi = pi.to(device)
+        self.mu = mu.to(device)
+        self.S = sigma.to(device)
+        self._d = mu.shape[1]
         self._calculate_evd()
         self._MAP = MAP
 
@@ -96,3 +95,15 @@ class GMMDenoiser:
             ks = pt.multinomial(r, 1)[:, 0].tolist()
             return self._sample(y, noise_var, ks).reshape(shp)
 
+    @staticmethod
+    def load_from_file(path, **kwargs):
+        d = joblib.load(path)
+        return GMMDenoiser(mu=d['mu'], pi=d['pi'], sigma=d['Sigma'], **kwargs)
+
+    def save(self, path):
+        d = {
+            'pi': self.pi,
+            'mu': self.mu,
+            'Sigma': self.S,
+        }
+        joblib.dump(d, path)

@@ -7,28 +7,28 @@ from utils import load_image, show_images
 import sys
 sys.path.append("models")
 from models.GMM_denoiser import GMMDenoiser
-from models.NN_denoiser import FaissNNModule, windowed_prior_wrapper
+from models.NN_denoiser import LocalPatchDenoiser, NN_Prior
 
 noise_std = 1 / 255
 alpha = 1 / 50
 betas = [min(2 ** i / alpha, 3000) for i in range(6)]
-patch_size = 16
-stride = 16
+patch_size = 8
+stride = 1
 n_corruptions = 1
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # device = torch.device('cpu')
 
 
-denoiser = GMMDenoiser('models/saved_models/GMM(k=10)_SkLearn(p=8_N=1000x1000).joblib', device, MAP=True)
+# denoiser = GMMDenoiser.load_from_file('models/saved_models/GMM100.mdl', device=device, MAP=True)
 
-# denoiser = joblib.load('models/saved_models/nn_local_(N=1000_p=8_s=3_w=8).joblib')
-# denoiser = joblib.load('models/saved_models/nn_global_(p=16_N=1000x1000).joblib')
+# denoiser = LocalPatchDenoiser.load_from_file("models/saved_models/nn_local_(N={n_images}_p={patch_size}_s={stride}_w={n_windows_per_dim}).joblib")
+denoiser = NN_Prior.load_from_file("models/saved_models/nn_global_(p=8_N=100xNone).joblib")
 
-image = load_image('/mnt/storage_ssd/datasets/FFHQ_128/69999.png').to(device) #.float()
+image = load_image('/cs/labs/yweiss/ariel1/data/FFHQ_128/69999.png').to(device)
 
-# H = blur_operator(15, 2)
-H = downsample_operator(0.5)
+H = blur_operator(15, 2)
+# H = downsample_operator(0.5)
 
 corrupt_image = image
 for i in range(n_corruptions):
