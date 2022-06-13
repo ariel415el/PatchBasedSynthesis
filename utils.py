@@ -27,23 +27,19 @@ def get_patches(x, p, stride):
     return flat_x.T
 
 
-def split_patches_to_windows(patches, img_height, img_width, patch_size, stride, split_factor=2):
-    """Splits a list of patches to a matrix [split_factor x split_factor] of lists of patches. The split is by spatial location"""
-    patch_sets = []
-    for r in range(split_factor):
-        row = []
-        for c in range(split_factor):
-            row.append([])
-        patch_sets.append(row)
-
+def patch_to_window_index(patch_size, stride, img_height, img_width, n_windows_per_dim):
     n_patches_in_row = (img_height - patch_size) // stride + 1
     n_patches_in_col = (img_width - patch_size) // stride + 1
-    for i, patch in enumerate(patches):
+
+    patch_indices = []
+    for i in range( n_patches_in_row * n_patches_in_col):
         patch_row = i // n_patches_in_row
         patch_col = i % n_patches_in_col
 
-        window_row = min(split_factor - 1, patch_row // (n_patches_in_row // split_factor))
-        window_col = min(split_factor - 1, patch_col // (n_patches_in_col // split_factor))
-        patch_sets[window_row][window_col].append(patch)
+        window_row = min(n_windows_per_dim - 1, patch_row // (n_patches_in_row // n_windows_per_dim))
+        window_col = min(n_windows_per_dim - 1, patch_col // (n_patches_in_col // n_windows_per_dim))
 
-    return patch_sets
+        patch_indices.append(window_row*n_windows_per_dim + window_col)
+
+    return np.array(patch_indices)
+

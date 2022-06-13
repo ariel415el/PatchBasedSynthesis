@@ -6,9 +6,20 @@ import numpy as np
 import torch
 from sklearn import mixture
 
-from models.denoiser import FaissNNModule
-from utils import get_patches, load_image
+from NN_denoiser import FaissNNModule, windowed_prior_wrapper, NN_Prior
+from utils import get_patches, load_image, patch_to_window_index
 
+
+def read_local_data(data_path, n_images, patch_size, stride):
+    img_list = random.sample(os.listdir(data_path), n_images)
+    data = []
+    for i, im_name in enumerate(img_list):
+        im = load_image(os.path.join(data_path, im_name))
+        gray_im = torch.mean(im, dim=0, keepdim=True)
+        h,w = gray_im.shape[-2:]
+        data += [get_patches(gray_im, patch_size, stride)]
+    data = torch.stack(data, dim=0) # [b, N, 3*p*p]
+    return data, h, w
 
 def read_random_patches(data_path, patch_size, stride, n_images, samples_per_image=None, substruct_mean=False):
     img_list = random.sample(os.listdir(data_path), n_images)
@@ -30,9 +41,9 @@ def read_random_patches(data_path, patch_size, stride, n_images, samples_per_ima
 def train_GMM():
     n_images = 1000
     samples_per_image = 1000
-    patch_size = 8
+    patch_size = 16
     stride = 2
-    n_components = 3
+    n_components = 10
 
     data = read_random_patches(data_path, patch_size, stride, n_images, samples_per_image)
 
@@ -44,15 +55,45 @@ def train_GMM():
     joblib.dump(gmm, out_path)
 
 
-def train_approximate_nn(data, descriptor):
+def train_global_nn_denoiser():
+    n_images = 1000
+    samples_per_image = 1000
+    patch_size = 16
+    stride = 2
+    data = read_random_patches(data_path, patch_size, stride, n_images, samples_per_image)
+
     print(f"[*] Creating NN prior for {len(data)} data points..")
-    nn_prior = FaissNNModule()
-    nn_prior.set_index(data)
-    joblib.dump(nn_prior, f"nn_prior({descriptor}).joblib")
+    # nn_prior = FaissNNModule()
+    # nn_prior.set_index(data)
+    nn_prior = NN_Prior(data)
+    joblib.dump(nn_prior, f"saved_models/nn_global_(p={patch_size}_N={n_images}x{samples_per_image}).joblib")
+
+
+def train_local_nn_denoisers():
+    n_images = 1000
+    patch_size = 8
+    stride = 3
+    n_windows_per_dim = 8
+    patches, h, w = read_local_data(data_path, n_images, patch_size, stride)
+    patches = patches.permute(1,0,2)
+
+    patch_indices = patch_to_window_index(patch_size, stride, h, w, n_windows_per_dim)
+
+    nn_priors = []
+    for i in sorted(np.unique(patch_indices)):
+        data = patches[patch_indices == i].reshape(-1, patches.shape[-1])
+        # nn_priors.append(FaissNNModule())
+        # nn_priors[-1].set_index(data)
+        nn_priors.append(NN_Prior(data))
+
+    prior = windowed_prior_wrapper(nn_priors, patch_indices)
+
+    joblib.dump(prior, f"saved_models/nn_local_(N={n_images}_p={patch_size}_s={stride}_w={n_windows_per_dim}).joblib")
 
 
 if __name__ == '__main__':
     data_path = '/mnt/storage_ssd/datasets/FFHQ_128'
 
     train_GMM()
-    # train_approximate_nn(data, descriptor)
+    # train_local_nn_denoisers()
+    # train_global_nn_denoiser()

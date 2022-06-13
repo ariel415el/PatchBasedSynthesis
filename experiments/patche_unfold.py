@@ -7,14 +7,14 @@ from utils import load_image, get_patches
 
 def main():
     p = 32
-    s = 16
+    s = 8
+    n_windows_per_dim = 4
     image = load_image('/mnt/storage_ssd/datasets/FFHQ_128/69999.png')
     h,w = image.shape[-2:]
 
     patches = get_patches(image, p, s).reshape(-1,3,p,p)
 
-    n_windows_per_dim = 2
-    patch_sets = split_patches_to_windows(patches, h, w, p, s, 2)
+    patch_sets = split_patches_to_windows(patches, h, w, p, s, n_windows_per_dim)
     for r in range(n_windows_per_dim):
         for c in range(n_windows_per_dim):
             window_patches = patch_sets[r][c]
