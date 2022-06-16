@@ -6,31 +6,27 @@ import numpy as np
 import torch
 from sklearn import mixture
 import torchvision.transforms.functional as F
-from NN_denoiser import LocalPatchDenoiser, NN_Prior
+from NN_denoiser import LocalPatchDenoiser, NN_Denoiser
 from models.GMM_denoiser import GMMDenoiser
 from utils import get_patches, load_image, patch_to_window_index
 
 
-def read_local_data(data_path, patch_size, stride, n_images, grayscale=False, resize=None):
+def read_local_data(image_paths, patch_size, stride, grayscale=False, resize=None):
     """Read 'n_images' random images"""
-    # img_list = random.sample(os.listdir(data_path), n_images)
-    img_list = os.listdir(data_path)[:n_images]
     data = []
-    for i, im_name in enumerate(img_list):
-        im = load_image(os.path.join(data_path, im_name), grayscale, resize)
+    for i, path in enumerate(image_paths):
+        im = load_image(path, grayscale, resize)
         h,w = im.shape[-2:]
         data += [get_patches(im, patch_size, stride)]
     data = torch.stack(data, dim=0) # [b, N, c*p*p]
     return data, h, w
 
 
-def read_random_patches(data_path, patch_size, stride, n_images, samples_per_image=None, grayscale=False, resize=None):
+def read_random_patches(image_paths, patch_size, stride, samples_per_image=None, grayscale=False, resize=None):
     """Draw 'samples_per_image' random patches from 'n_images' random images"""
-    # img_list = random.sample(os.listdir(data_path), n_images)
-    img_list = os.listdir(data_path)[:n_images]
     data = []
-    for i, im_name in enumerate(img_list):
-        im = load_image(os.path.join(data_path, im_name), grayscale, resize)
+    for i, path in enumerate(image_paths):
+        im = load_image(path, grayscale, resize)
         patches = get_patches(im, patch_size, stride)
         if samples_per_image is not None:
             idx = random.sample(range(len(patches)), min(len(patches), samples_per_image))
@@ -42,8 +38,8 @@ def read_random_patches(data_path, patch_size, stride, n_images, samples_per_ima
     return data
 
 
-def train_GMM(data_path, n_components, patch_size, n_images, samples_per_image, grayscale=False, resize=None):
-    data = read_random_patches(data_path, patch_size, 1, n_images, samples_per_image, grayscale=grayscale, resize=resize)
+def train_GMM(image_paths, n_components, patch_size, samples_per_image, grayscale=False, resize=None):
+    data = read_random_patches(image_paths, patch_size, 1, samples_per_image, grayscale=grayscale, resize=resize)
 
     # fit a GMM model with EM
     print(f"[*] Fitting GMM with {n_components} to {len(data)} data points..")
@@ -54,19 +50,20 @@ def train_GMM(data_path, n_components, patch_size, n_images, samples_per_image, 
                             mu=torch.from_numpy(gmm.means_),
                             sigma=torch.from_numpy(gmm.covariances_), device=torch.device('cpu'))
 
-    denoiser.save(f"saved_models/GMM(R={resize}_k={n_components}_(p={patch_size}_N={n_images}x{samples_per_image}{'_1C' if grayscale else ''}).joblib")
+    denoiser.save(f"saved_models/{denoiser.name}p={patch_size}_c={1 if grayscale else 3}_R={resize}_N={len(image_paths)}x{samples_per_image}_.joblib")
 
 
-def train_global_nn_denoiser(data_path, patch_size, n_images, samples_per_image, grayscale=False, resize=None):
-    data = read_random_patches(data_path, patch_size, 1, n_images, samples_per_image, grayscale=grayscale, resize=resize)
+def train_global_nn_denoiser(image_paths, patch_size, samples_per_image, grayscale=False, resize=None):
+    data = read_random_patches(image_paths, patch_size, 1, samples_per_image, grayscale=grayscale, resize=resize)
     print(f"[*] Creating NN prior for {len(data)} data points..")
-    nn_prior = NN_Prior(data, patch_size, 1 if grayscale else 3)
-    nn_prior.save(f"saved_models/nn_global(R={resize}_p={patch_size}_N={n_images}x{samples_per_image}{'_1C' if grayscale else ''}).joblib")
+    denoiser = NN_Denoiser(data, patch_size, 1 if grayscale else 3)
+
+    denoiser.save(f"saved_models/{denoiser.name}_p={patch_size}_c={1 if grayscale else 3}_R={resize}_N={len(image_paths)}x{samples_per_image}.joblib")
 
 
-def train_local_nn_denoisers(data_path, patch_size, stride, n_images, n_windows_per_dim=None, grayscale=False, resize=None):
+def train_local_nn_denoisers(image_paths, patch_size, stride, n_windows_per_dim=None, grayscale=False, resize=None):
 
-    patches, h, w = read_local_data(data_path, patch_size, stride, n_images, grayscale=grayscale, resize=resize)
+    patches, h, w = read_local_data(image_paths, patch_size, stride, grayscale=grayscale, resize=resize)
     patches = patches.permute(1, 0, 2)  #   [N, b, 3*p*p]
 
     patch_index_to_widnow_index = None
@@ -80,15 +77,21 @@ def train_local_nn_denoisers(data_path, patch_size, stride, n_images, n_windows_
         for i in range(len(patches)):
             data_sets.append(patches[i])
 
-    prior = LocalPatchDenoiser(data_sets, patch_size, 1 if grayscale else 3, patch_index_to_widnow_index)
+    denoiser = LocalPatchDenoiser(data_sets, patch_size, 1 if grayscale else 3, patch_index_to_widnow_index)
 
-    prior.save(f"saved_models/nn_local(R={resize}_N={n_images}_p={patch_size}_s={stride}_w={n_windows_per_dim}{'_1C' if grayscale else ''}).joblib")
+    denoiser.save(f"saved_models/{denoiser.name}p={patch_size}_s={stride}_w={n_windows_per_dim}_c={1 if grayscale else 3}_R={resize}_N={len(image_paths)}.joblib")
 
 
 if __name__ == '__main__':
-    data_path = '/mnt/storage_ssd/datasets/FFHQ_128'
+    import json
 
-    for resize in [16, 32, 64, 128]:
-        train_GMM(data_path, n_images=100, patch_size=8, samples_per_image=None, n_components=10, grayscale=True, resize=resize)
-        # train_local_nn_denoisers(data_path, patch_size=8, stride=1, n_images=1000, n_windows_per_dim=2, grayscale=True, resize=resize)
-        # train_global_nn_denoiser(data_path, patch_size=8, n_images=500, samples_per_image=None, grayscale=True, resize=resize)
+    data_path = '/cs/labs/yweiss/ariel1/data/FFHQ_128'
+    n_images = 5000
+    # path_list = os.listdir(data_path)[:n_images]
+    path_list = [os.path.join(data_path, name) for name in json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[:n_images]]
+
+    # for resize in [16, 32, 64, 128]:
+    for resize in [16, 32, 64]:
+        # train_GMM(path_list, patch_size=8, samples_per_image=None, n_components=10, grayscale=True, resize=resize)
+        train_local_nn_denoisers(path_list, patch_size=8, stride=1, n_windows_per_dim=resize//2, grayscale=True, resize=resize)
+        # train_global_nn_denoiser(path_list, patch_size=8, samples_per_image=None, grayscale=True, resize=resize)

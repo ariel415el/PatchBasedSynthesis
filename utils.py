@@ -21,19 +21,6 @@ def plot_img(axs, img, name):
     axs.axis('off')
 
 
-def plot_multi_scale_decorruption(outputs, input_image, corrupt_image, initial_guesses):
-    # plt.figure(dpi=200)
-    fig, axs = plt.subplots(2, len(outputs) + 1, dpi=200)
-    plot_img(axs[0,0], input_image, 'input')
-    plot_img(axs[1,0], corrupt_image, 'corrupt_image')
-
-    for i in range(len(outputs)):
-        plot_img(axs[0, i + 1], outputs[i], f'output - {16*2**i}')
-        plot_img(axs[1, i + 1], initial_guesses[i], f'initial_guess - {16*2**i}')
-    plt.tight_layout()
-    plt.show()
-
-
 def show_images(images_and_names):
     fig, axs = plt.subplots(1, len(images_and_names), dpi=200)
     for i, (image, name) in enumerate(images_and_names):

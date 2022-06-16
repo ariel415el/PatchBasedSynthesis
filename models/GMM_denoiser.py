@@ -20,6 +20,7 @@ class GMMDenoiser:
         self._d = mu.shape[1]
         self._calculate_evd()
         self._MAP = MAP
+        self.name = f"GMM_k=10_Map={self._MAP}"
 
     def _calculate_evd(self):
         _precision = 1e-10

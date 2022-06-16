@@ -1,18 +1,21 @@
-import faiss
+# import faiss
 import joblib
 import numpy as np
 import torch
 import torchvision
-
+import torchvision.transforms as tv_t
 
 class LocalPatchDenoiser:
     def __init__(self, data_sets, patch_size, channels, patch_index_to_widnow_index=None):
-        self.priors = [NN_Prior(data, patch_size, channels) for data in data_sets]
+        print("Loading local priors...")
+        self.priors = [NN_Denoiser(data, patch_size, channels, use_lr_keys=False) for data in data_sets]
+        print("Done...")
         self.p = patch_size
         self.c = channels
         if patch_index_to_widnow_index is None:
             patch_index_to_widnow_index = list(range(len(data_sets)))
         self.patch_indices = patch_index_to_widnow_index
+        self.name = f"local_NN_prior"
 
     def denoise(self, queries, noise_var):
         queries_copy = queries.clone()
@@ -27,61 +30,61 @@ class LocalPatchDenoiser:
             'data_sets': [p.data for p in self.priors],
             'patch_index_to_widnow_index': self.patch_indices
         }
-        joblib.dump(d, path)
+        joblib.dump(d, path, protocol=4)
 
     @staticmethod
     def load_from_file(path):
         d = joblib.load(path)
         return LocalPatchDenoiser(**d)
-
-class FaissNNModule:
-    def __init__(self, use_gpu=False):
-        self.use_gpu = use_gpu
-        self.index = None
-
-    def _get_index(self, n, d):
-        # return faiss.IndexIVFFlat(faiss.IndexFlat(d), d, int(np.sqrt(n)))
-        return faiss.IndexIVFPQ(faiss.IndexFlatL2(d), d, int(np.sqrt(n)), 8, 8)
-
-    def set_index(self, data):
-        import torchvision
-        self.data = data
-        self.c = 3
-        self.p = int(np.sqrt(data.shape[-1] // self.c))
-        self.resized_data = torchvision.transforms.Resize((self.p//2, self.p//2))(data.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
-        self.resized_data = np.ascontiguousarray(self.resized_data.numpy(), dtype='float32')
-        self.index = self._get_index(*self.resized_data.shape)
-
-        if self.use_gpu:
-            res = faiss.StandardGpuResources()
-            self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-
-        if not self.index.is_trained:
-            self.index.train(self.resized_data)
-
-        self.index.add(self.resized_data)
-
-    def denoise(self, queries, noise_var):
-        assert self.index is not None
-        # queries -= torch.mean(queries, dim=1, keepdim=True)
-
-        resize_queries = torchvision.transforms.Resize((self.p//2, self.p//2))(queries.reshape(-1, 3, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
-        resize_queries = np.ascontiguousarray(resize_queries.cpu().numpy(), dtype='float32')
-
-        _, I = self.index.search(resize_queries, 1)  # actual search
-
-        NNs = I[:, 0]
-        return self.data[NNs].to(queries.device)
-
-    def save(self, path):
-        joblib.dump(self.data, path)
-
-    @staticmethod
-    def load_from_file(path, use_gpu=False):
-        data = joblib.load(path)
-        prior = FaissNNModule(use_gpu)
-        prior.set_index(data)
-        return prior
+#
+# class FaissNNModule:
+#     def __init__(self, use_gpu=False):
+#         self.use_gpu = use_gpu
+#         self.index = None
+#
+#     def _get_index(self, n, d):
+#         # return faiss.IndexIVFFlat(faiss.IndexFlat(d), d, int(np.sqrt(n)))
+#         return faiss.IndexIVFPQ(faiss.IndexFlatL2(d), d, int(np.sqrt(n)), 8, 8)
+#
+#     def set_index(self, data):
+#         import torchvision
+#         self.data = data
+#         self.c = 3
+#         self.p = int(np.sqrt(data.shape[-1] // self.c))
+#         self.resized_data = tv_t.Resize((self.p//2, self.p//2))(data.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
+#         self.resized_data = np.ascontiguousarray(self.resized_data.numpy(), dtype='float32')
+#         self.index = self._get_index(*self.resized_data.shape)
+#
+#         if self.use_gpu:
+#             res = faiss.StandardGpuResources()
+#             self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
+#
+#         if not self.index.is_trained:
+#             self.index.train(self.resized_data)
+#
+#         self.index.add(self.resized_data)
+#
+#     def denoise(self, queries, noise_var):
+#         assert self.index is not None
+#         # queries -= torch.mean(queries, dim=1, keepdim=True)
+#
+#         resize_queries = tv_t.Resize((self.p//2, self.p//2))(queries.reshape(-1, 3, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
+#         resize_queries = np.ascontiguousarray(resize_queries.cpu().numpy(), dtype='float32')
+#
+#         _, I = self.index.search(resize_queries, 1)  # actual search
+#
+#         NNs = I[:, 0]
+#         return self.data[NNs].to(queries.device)
+#
+#     def save(self, path):
+#         joblib.dump(self.data, path)
+#
+#     @staticmethod
+#     def load_from_file(path, use_gpu=False):
+#         data = joblib.load(path)
+#         prior = FaissNNModule(use_gpu)
+#         prior.set_index(data)
+#         return prior
 
 
 def efficient_compute_distances(X, Y):
@@ -118,18 +121,25 @@ def get_NN_indices_low_memory(X, Y, b):
     return NNs
 
 
-class NN_Prior:
-    def __init__(self, data, patch_size, channels):
+class NN_Denoiser:
+    def __init__(self, data, patch_size, channels, use_lr_keys=True):
         self.c = channels
         self.p = patch_size
         self.data = data
-        self.resized_data = torchvision.transforms.Resize((self.p//2, self.p//2))(data.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
+        self.use_lr_keys = use_lr_keys
+        self.resize = tv_t.Resize((self.p//2, self.p//2), tv_t.InterpolationMode.NEAREST)
+        if use_lr_keys:
+            self.resized_data = self.resize(data.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
+        print("NN_Denoiser: NN data Load")
+        self.name = f"NN_prior"
 
     def denoise(self, queries, noise_var):
-        resize_queries = torchvision.transforms.Resize((self.p//2, self.p//2))(queries.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
-        NNs = get_NN_indices_low_memory(resize_queries, self.resized_data.to(resize_queries.device), b=4)
-
-        # NNs = get_NN_indices_low_memory(queries.reshape(-1, self.c*(self.p)**2), self.data.to(queries.device).reshape(-1, self.c*(self.p)**2), b=4)
+        b = 256
+        if self.use_lr_keys:
+            resize_queries = self.resize(queries.reshape(-1, self.c, self.p, self.p)).float().reshape(-1, self.c*(self.p//2)**2)
+            NNs = get_NN_indices_low_memory(resize_queries, self.resized_data.to(resize_queries.device), b=b)
+        else:
+            NNs = get_NN_indices_low_memory(queries.reshape(-1, self.c*(self.p)**2), self.data.to(queries.device).reshape(-1, self.c*(self.p)**2), b=b)
         return self.data[NNs].to(queries.device)
 
     def save(self, path):
@@ -138,4 +148,4 @@ class NN_Prior:
     @staticmethod
     def load_from_file(path):
         d = joblib.load(path)
-        return NN_Prior(**d)
+        return NN_Denoiser(**d)

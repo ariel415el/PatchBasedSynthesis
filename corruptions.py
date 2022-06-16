@@ -47,12 +47,15 @@ class blur_operator:
 class downsample_operator:
     def __init__(self, scale_factor):
         self.scale_factor = scale_factor
+        self.down_interpolation = torchvision.transforms.InterpolationMode.BILINEAR
+        self.up_interpolation = torchvision.transforms.InterpolationMode.NEAREST
 
     def __call__(self, x):
         h, w = x.shape[-2:]
-        return torchvision.transforms.Resize((int(h * self.scale_factor), int(w * self.scale_factor)))(x)
+        return torchvision.transforms.Resize((int(h * self.scale_factor), int(w * self.scale_factor)), interpolation=self.down_interpolation)(x)
 
     def naive_reverse(self, x):
         h, w = x.shape[-2:]
-        return torchvision.transforms.Resize((int(h / self.scale_factor), int(w / self.scale_factor)))(x)
+
+        return torchvision.transforms.Resize((int(h / self.scale_factor), int(w / self.scale_factor)), interpolation=self.up_interpolation)(x)
 
