@@ -59,3 +59,20 @@ class downsample_operator:
 
         return torchvision.transforms.Resize((int(h / self.scale_factor), int(w / self.scale_factor)), interpolation=self.up_interpolation)(x)
 
+
+class RepeteadOperator:
+    def __init__(self, H, n):
+        self.H = H
+        self.n = n
+
+    def __call__(self, x):
+        tmp = x.clone()
+        for _ in range(self.n):
+            tmp = self.H(tmp)
+        return tmp
+
+    def naive_reverse(self, x):
+        tmp = x.clone()
+        for _ in range(self.n):
+            tmp = self.H.naive_reverse(tmp)
+        return tmp

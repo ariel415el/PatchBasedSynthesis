@@ -22,7 +22,7 @@ def plot_img(axs, img, name):
 
 
 def show_images(images_and_names):
-    fig, axs = plt.subplots(1, len(images_and_names), dpi=200)
+    fig, axs = plt.subplots(1, len(images_and_names), dpi=200, figsize=(2*len(images_and_names),2))
     for i, (image, name) in enumerate(images_and_names):
         plot_img(axs[i], image, name)
     plt.tight_layout()

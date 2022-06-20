@@ -17,9 +17,9 @@ def optimize_image(x, loss_func, its, lr=1e-2):
     return x.data
 
 
-def decorrupt_with_patch_prior_and_callable_H(corrupt_image, noise_std, H, patch_denoiser, betas, patch_size, stride):
+def decorrupt_with_patch_prior_and_callable_H(corrupt_image, initial_guess, noise_std, H, patch_denoiser, betas, patch_size, stride):
     noise_std = noise_std / (patch_size / stride)
-    x = H.naive_reverse(corrupt_image.clone())
+    x = initial_guess.clone()
     pbar = tqdm(betas)
     for beta in pbar:
         pbar.set_description(f'beta={beta}')

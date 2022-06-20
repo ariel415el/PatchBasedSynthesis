@@ -1,10 +1,12 @@
 import json
+import os
+
 import torch
 import torchvision.transforms as  tv_t
 from matplotlib import pyplot as plt
 
 from EPLL import decorrupt_with_patch_prior_and_callable_H
-from corruptions import downsample_operator, blur_operator
+from corruptions import downsample_operator, blur_operator, RepeteadOperator
 from utils import load_image, show_images, plot_img
 import sys
 sys.path.append("models")
@@ -28,13 +30,14 @@ def main():
     betas = [min(2 ** i / alpha, 3000) for i in range(6)]
     patch_size = 8
     stride = 1
-    n_levels = 3
+    n_levels = 2
     resize = 64
     grayscale = True
 
     # H = blur_operator(15, 2)
     H = downsample_operator(0.5)
-    # image_path = os.path.join('../data//FFHQ_128/', json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[200])
+    # H = RepeteadOperator(H, 2)
+    # image_path = os.path.join('../data//FFHQ_128/', json.load(open("top_frontal_facing_FFHQ.txt", 'r'))[5000])
     image_path = '../data//FFHQ_128/69989.png'
     image = load_image(image_path, grayscale=grayscale, resize=resize).to(device)
 
@@ -47,9 +50,11 @@ def main():
         resolution = resize//2**(n_levels - 1 - i)
         # denoiser = GMMDenoiser.load_from_file(f"models/saved_models/GMM(R={resolution}_k=10_(p=8_N=100xNone{'_1C' if grayscale else ''}).joblib", device=device, MAP=True)
         # denoiser = NN_Denoiser.load_from_file(f"models/saved_models/NN_prior_p=8_c={1 if grayscale else 3}_R={resolution}_N=100xNone.joblib")
-        denoiser = LocalPatchDenoiser.load_from_file(f"models/saved_models/local_NN_priorp=8_s=1_w={resolution//2}_c={1 if grayscale else 3}_R={resolution}_N=5000.joblib")
+        denoiser = LocalPatchDenoiser.load_from_file(f"models/saved_models/local_NN_priorp=8_s=1_w={resolution//2}_c={1 if grayscale else 3}_R={resolution}_N=5000.joblib",
+                                                     keys_mode='resize')
 
-        tmp_img = decorrupt_with_patch_prior_and_callable_H(tmp_img, noise_std, H, denoiser, betas, patch_size, stride)
+        # tmp_img = decorrupt_with_patch_prior_and_callable_H(corrupt_image, H.naive_reverse(tmp_img), noise_std, RepeteadOperator(H, i+1), denoiser, betas, patch_size, stride)
+        tmp_img = decorrupt_with_patch_prior_and_callable_H(tmp_img, H.naive_reverse(tmp_img), noise_std, H, denoiser, betas, patch_size, stride)
         outputs.append(tmp_img)
 
     debug_images = [

@@ -1,11 +1,13 @@
 import os
 import random
+import sys
 
 import joblib
 import numpy as np
 import torch
 from sklearn import mixture
 import torchvision.transforms.functional as F
+sys.path.append(os.path.dirname(__file__))
 from NN_denoiser import LocalPatchDenoiser, NN_Denoiser
 from models.GMM_denoiser import GMMDenoiser
 from utils import get_patches, load_image, patch_to_window_index
@@ -87,11 +89,13 @@ if __name__ == '__main__':
 
     data_path = '/cs/labs/yweiss/ariel1/data/FFHQ_128'
     n_images = 5000
+    p = 8
+    s = 8
     # path_list = os.listdir(data_path)[:n_images]
     path_list = [os.path.join(data_path, name) for name in json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[:n_images]]
 
     # for resize in [16, 32, 64, 128]:
-    for resize in [16, 32, 64]:
+    for resize in [128]:
         # train_GMM(path_list, patch_size=8, samples_per_image=None, n_components=10, grayscale=True, resize=resize)
-        train_local_nn_denoisers(path_list, patch_size=8, stride=1, n_windows_per_dim=resize//2, grayscale=True, resize=resize)
+        train_local_nn_denoisers(path_list, patch_size=p, stride=s, n_windows_per_dim=(resize//s)//2, grayscale=True, resize=resize)
         # train_global_nn_denoiser(path_list, patch_size=8, samples_per_image=None, grayscale=True, resize=resize)
