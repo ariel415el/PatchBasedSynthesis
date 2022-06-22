@@ -63,7 +63,7 @@ def replace_by_denoised_patches():
 
     # image = load_image(os.path.join('../../data/FFHQ_128/', json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[123]), grayscale=grayscale, resize=resize).to(device)
     image = load_image('../../data/FFHQ_128/69989.png', grayscale=grayscale, resize=resize).to(device)
-    H = downsample_operator(0.5)
+    H = downsample_operator(0.75)
 
     corrupt_image = iterative_corruption(image, H, noise_std, n_corruptions=1)
     initial_guess = H.naive_reverse(corrupt_image.clone())
@@ -72,17 +72,15 @@ def replace_by_denoised_patches():
     debug_pairs = [(image, 'image'), (corrupt_image, 'corrupt image')]
     original_patches = get_patches(image, p, s)
     for denoiser, name in denoisers:
-        # new_patches = denoiser.denoise(corrupt_patches, 0)
+        denoised_patches = denoiser.denoise(corrupt_patches, 0)
 
-        denoised_patches = denoiser.denoise(corrupt_patches, 0).reshape(-1,16,16)
-        new_patches = corrupt_patches.clone().reshape(-1,16,16)
-        new_patches[:, :8, :8] = denoised_patches[:, :8, :8]
-        new_patches[:, 8:, 8:] = torch.mean(denoised_patches[:, 8:, 8:], dim=(1,2), keepdim=True)
-        new_patches = new_patches.reshape(-1, 16**2)
-
-        dists = ((new_patches - original_patches)**2)
-        tmp = (combine_patches(new_patches, p, s, resize),
+        dists = ((denoised_patches - original_patches)**2)
+        tmp = (combine_patches(denoised_patches, p, s, resize),
                f"{name}: avg-dist:{dists.mean():.4f}, exact:{(dists.sum(1) == 0).sum()} / {len(dists)}")
+
+        # denoised_patches = denoised_patches.reshape(-1,16,16)[:, 4:12, 4:12].reshape(-1,8**2)
+        # tmp = (combine_patches(denoised_patches, 8, s, resize-8), "asd")
+
         debug_pairs.append(tmp)
 
     show_images(debug_pairs)
