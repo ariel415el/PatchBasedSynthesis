@@ -17,7 +17,7 @@ def optimize_image(x, loss_func, its, lr=1e-2):
     return x.data
 
 
-def decorrupt_with_patch_prior_and_callable_H(corrupt_image, initial_guess, noise_std, H, patch_denoiser, betas, patch_size, stride):
+def decorrupt_with_patch_prior_and_callable_H(corrupt_image, initial_guess, corroption_operator, noise_std, patch_denoiser, betas, patch_size, stride):
     noise_std = noise_std / (patch_size / stride)
     x = initial_guess.clone()
     pbar = tqdm(betas)
@@ -32,11 +32,8 @@ def decorrupt_with_patch_prior_and_callable_H(corrupt_image, initial_guess, nois
 
         z = patch_denoiser.denoise(z, 1 / beta)
 
-        # import torch.nn.functional as F
-        # x = F.fold(z.T.unsqueeze(0), kernel_size=patch_size, stride=stride, output_size=x.shape[-1])[0]  # [c*p*p, N]
-        # break
         def aggregation_loss(X):
-            global_loss = torch.sum((H(X) - corrupt_image) ** 2)
+            global_loss = torch.sum((corroption_operator(X) - corrupt_image) ** 2)
             patch_loss = torch.sum((z - get_patches(X, patch_size, stride=stride)) ** 2)
             return global_loss / noise_std ** 2 + patch_loss * beta
 

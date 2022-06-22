@@ -5,86 +5,55 @@ import torch
 import torchvision
 import torchvision.transforms as tv_t
 
+
 class LocalPatchDenoiser:
-    def __init__(self, data_sets, patch_size, channels, patch_index_to_widnow_index=None, keys_mode=None):
+    def __init__(self, data_path, patch_size, stride, channels, window_size, img_dim=None, keys_mode=None):
         print("Loading local priors...")
-        self.priors = [NN_Denoiser(data, patch_size, channels, keys_mode=keys_mode) for data in data_sets]
+        raw_data = joblib.load(data_path)
+
+        if stride > 1:
+            strided_indices = LocalPatchDenoiser._get_strided_data(img_dim, patch_size, stride)
+            raw_data = raw_data[strided_indices]
+
         print("Done...")
-        self.p = patch_size
-        self.c = channels
-        if patch_index_to_widnow_index is None:
-            patch_index_to_widnow_index = list(range(len(data_sets)))
-        self.patch_indices = patch_index_to_widnow_index
-        self.name = f"local_NN_prior"
+
+        self.window_indices = LocalPatchDenoiser._set_patch_window_indices(img_dim, patch_size, stride, window_size)
+
+        self.priors = []
+        for i in np.unique(self.window_indices):
+            local_data = raw_data[self.window_indices == i]
+            self.priors.append(NN_Denoiser(local_data, patch_size, channels, keys_mode))
+
+    @staticmethod
+    def _set_patch_window_indices(img_dim, patch_size, stride, window_size):
+        window_indices = []
+        n_patches_in_dim = (img_dim - patch_size) // stride + 1
+        for patch_index in  range(n_patches_in_dim ** 2):
+            patch_row = patch_index // n_patches_in_dim
+            patch_col = patch_index % n_patches_in_dim
+
+            window_row = patch_row // window_size
+            window_col = patch_col // window_size
+            window_index = window_row * n_patches_in_dim + window_col
+            window_indices.append(window_index)
+
+        return np.array(window_indices)
+
+    @staticmethod
+    def _get_strided_data(img_dim, patch_size, stride):
+        n_patches_with_stride_1 = img_dim - patch_size + 1
+        strided_indices_mask = []
+        for patch_index in range(n_patches_with_stride_1 ** 2):
+            patch_row = patch_index // n_patches_with_stride_1
+            patch_col = patch_index % n_patches_with_stride_1
+            strided_indices_mask.append((patch_row % stride == 0) and (patch_col % stride == 0))
+        return np.array(strided_indices_mask)
 
     def denoise(self, queries, noise_var):
         queries_copy = queries.clone()
         for i in range(len(self.priors)):
-            queries_copy[self.patch_indices == i] = self.priors[i].denoise(queries_copy[self.patch_indices == i], None)
+            queries_copy[self.window_indices == i] = self.priors[i].denoise(queries_copy[self.window_indices == i], None)
         return queries_copy
-
-    def save(self, path):
-        d = {
-            'patch_size': self.p,
-            'channels': self.c,
-            'data_sets': [p.data for p in self.priors],
-            'patch_index_to_widnow_index': self.patch_indices
-        }
-        joblib.dump(d, path, protocol=4)
-
-    @staticmethod
-    def load_from_file(path, keys_mode=None):
-        d = joblib.load(path)
-        return LocalPatchDenoiser(**d, keys_mode=keys_mode)
-#
-# class FaissNNModule:
-#     def __init__(self, use_gpu=False):
-#         self.use_gpu = use_gpu
-#         self.index = None
-#
-#     def _get_index(self, n, d):
-#         # return faiss.IndexIVFFlat(faiss.IndexFlat(d), d, int(np.sqrt(n)))
-#         return faiss.IndexIVFPQ(faiss.IndexFlatL2(d), d, int(np.sqrt(n)), 8, 8)
-#
-#     def set_index(self, data):
-#         import torchvision
-#         self.data = data
-#         self.c = 3
-#         self.p = int(np.sqrt(data.shape[-1] // self.c))
-#         self.resized_data = tv_t.Resize((self.p//2, self.p//2))(data.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
-#         self.resized_data = np.ascontiguousarray(self.resized_data.numpy(), dtype='float32')
-#         self.index = self._get_index(*self.resized_data.shape)
-#
-#         if self.use_gpu:
-#             res = faiss.StandardGpuResources()
-#             self.index = faiss.index_cpu_to_gpu(res, 0, self.index)
-#
-#         if not self.index.is_trained:
-#             self.index.train(self.resized_data)
-#
-#         self.index.add(self.resized_data)
-#
-#     def denoise(self, queries, noise_var):
-#         assert self.index is not None
-#         # queries -= torch.mean(queries, dim=1, keepdim=True)
-#
-#         resize_queries = tv_t.Resize((self.p//2, self.p//2))(queries.reshape(-1, 3, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
-#         resize_queries = np.ascontiguousarray(resize_queries.cpu().numpy(), dtype='float32')
-#
-#         _, I = self.index.search(resize_queries, 1)  # actual search
-#
-#         NNs = I[:, 0]
-#         return self.data[NNs].to(queries.device)
-#
-#     def save(self, path):
-#         joblib.dump(self.data, path)
-#
-#     @staticmethod
-#     def load_from_file(path, use_gpu=False):
-#         data = joblib.load(path)
-#         prior = FaissNNModule(use_gpu)
-#         prior.set_index(data)
-#         return prior
 
 
 def efficient_compute_distances(X, Y):
@@ -120,6 +89,7 @@ def get_NN_indices_low_memory(X, Y, b):
         NNs[n_batches * b:] = dists.min(1)[1]
     return NNs
 
+
 def get_NN_indices_low_memory_2(X, Y, X2, Y2, b):
     """
     Get the nearest neighbor index from Y for each X.
@@ -146,6 +116,9 @@ class NN_Denoiser:
     def __init__(self, data, patch_size, channels, keys_mode=None):
         self.c = channels
         self.p = patch_size
+        if type(data) == str:
+            data = joblib.load(data)
+        data = data.reshape(-1, data.shape[-1])
         self.data = data
         self.keys_mode = keys_mode
         self.resize = tv_t.Resize((self.p//2, self.p//2), tv_t.InterpolationMode.NEAREST)
@@ -155,8 +128,9 @@ class NN_Denoiser:
         elif keys_mode == 'PCA':
             self.data_mean = data.mean(0)
             U, S, V = torch.svd((data - self.data_mean).T @ (data - self.data_mean))
-            k = data.shape[1] // 8
+            k = int(np.sqrt(data.shape[1]))
             self.projection_matrix = V[:, :k]
+            # import matplotlib.pyplot as plt; plt.plot(np.arange(len(S)), S); plt.show()
             self.projected_data = (data - self.data_mean) @ self.projection_matrix
             print("Pca done")
         else:
@@ -173,12 +147,5 @@ class NN_Denoiser:
             NNs = get_NN_indices_low_memory((queries - self.data_mean) @ self.projection_matrix.to(queries.device), self.projected_data.to(queries.device), b=b)
         else:
             NNs = get_NN_indices_low_memory(queries, self.data.to(queries.device), b=b)
+
         return self.data[NNs].to(queries.device)
-
-    def save(self, path):
-        joblib.dump({'data': self.data, 'patch_size': self.p, 'channels': self.c}, path)
-
-    @staticmethod
-    def load_from_file(path, keys_mode=None):
-        d = joblib.load(path)
-        return NN_Denoiser(**d, keys_mode=keys_mode)

@@ -1,7 +1,9 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torchvision.utils import save_image
-
+import os
+import json
 from corruptions import downsample_operator, blur_operator
 from experiments.compare_with_pca import combine_patches
 from main import iterative_corruption
@@ -11,75 +13,80 @@ from utils import load_image, get_patches, show_images
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def combine_patches(patches, patch_size, stride, resize):
-    combined = F.fold(patches.T.unsqueeze(0), output_size=resize, kernel_size=patch_size, stride=stride)
-
+def combine_patches(patches, patch_size, stride, img_dim):
+    combined = F.fold(patches.T.unsqueeze(0), output_size=img_dim, kernel_size=patch_size, stride=stride)
     # normal fold matrix
     c = 1
-    input_ones = torch.ones((1,c,resize, resize), dtype=patches.dtype, device=patches.device)
+    input_ones = torch.ones((1,c,img_dim, img_dim), dtype=patches.dtype, device=patches.device)
     divisor = F.unfold(input_ones, kernel_size=patch_size, dilation=(1, 1), stride=stride, padding=(0, 0))
-    divisor = F.fold(divisor, output_size=resize, kernel_size=patch_size, stride=stride)
+    divisor = F.fold(divisor, output_size=img_dim, kernel_size=patch_size, stride=stride)
 
     divisor[divisor == 0] = 1.0
     return (combined / divisor).squeeze(dim=0)
 
+def combine_patches_median(patches, patch_size, stride, img_dim):
+    resized_patches = patches.reshape(-1, patch_size, patch_size)
+    pixel_arryas = [[] for x in range(img_dim**2)]
+    n_patches_with_stride = (img_dim - patch_size) // stride + 1
+    for patch_index in range(n_patches_with_stride ** 2):
+        for i in range(patch_size):
+            for j in range(patch_size):
+                row = (patch_index // n_patches_with_stride)*stride + i
+                col = (patch_index % n_patches_with_stride)*stride + j
+                idx = row * img_dim + col
+                pixel_arryas[idx].append(resized_patches[patch_index, i, j].item())
+
+    resized_patches = np.array([np.median(x) for x in pixel_arryas]).reshape(1, img_dim, img_dim)
+    return torch.from_numpy(resized_patches)
+
 def replace_by_denoised_patches():
-    p = 8
-    s = 8
-    resize = 128
+    p = 16
+    s = 1
+    resize = 64
     grayscale = True
     noise_std = 1 / 255
-    local_nn_denoiser = LocalPatchDenoiser.load_from_file(f"../models/saved_models/local_NN_priorp={p}_s={s}_w={16}_c={1 if grayscale else 3}_R={resize}_N=5000.joblib",
-                                                          keys_mode=None)
-    local_nn_denoiser_resize = LocalPatchDenoiser.load_from_file(f"../models/saved_models/local_NN_priorp={p}_s={s}_w={16}_c={1 if grayscale else 3}_R={resize}_N=5000.joblib",
-                                                          keys_mode='resize')
-    global_nn_denoiser = NN_Denoiser.load_from_file(f"../models/saved_models/NN_prior_p=8_c={1 if grayscale else 3}_R={resize}_N=100xNone.joblib")
-    gmm_denoiser = GMMDenoiser.load_from_file(f"../models/saved_models/GMM(R=128_k=10_(p=8_N=100xNone{'_1C' if grayscale else ''}).joblib",device=device, MAP=True)
 
-    import os
-    import json
-    image = load_image(os.path.join('../../data/FFHQ_128/', json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[123]), grayscale=grayscale, resize=resize).to(device)
-    # image = load_image('../../data/FFHQ_128/69989.png', grayscale=grayscale, resize=resize).to(device)
+    denoisers = [
+        # (NN_Denoiser(f"../models/saved_models/Patches_p={p}_s=1_c=1_R={resize}_N=1000.joblib",
+        #              p, 1, keys_mode=None),
+        #  'global_nn'),
+        # (LocalPatchDenoiser(f"../models/saved_models/Patches_p={p}_s=1_c=1_R={resize}_N=1000.joblib",
+        #                     p, s, 1, window_size=1, img_dim=resize, keys_mode=None),
+        #  'local_nn'),
+        # (LocalPatchDenoiser(f"../models/saved_models/Patches_p={p}_s=1_c=1_R={resize}_N=1000.joblib",
+        #                     p, s, 1, window_size=1, img_dim=resize, keys_mode='resize'),
+        #  'local_nn_resize'),
+        (LocalPatchDenoiser(f"../models/saved_models/Patches_p={p}_s=1_c=1_R={resize}_N=1000.joblib",
+                            p, s, 1, window_size=1, img_dim=resize, keys_mode=None),
+         'local_nn_PCA'),
+    ]
 
-    # H = blur_operator(15, 2)
+    # image = load_image(os.path.join('../../data/FFHQ_128/', json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[123]), grayscale=grayscale, resize=resize).to(device)
+    image = load_image('../../data/FFHQ_128/69989.png', grayscale=grayscale, resize=resize).to(device)
     H = downsample_operator(0.5)
 
     corrupt_image = iterative_corruption(image, H, noise_std, n_corruptions=1)
     initial_guess = H.naive_reverse(corrupt_image.clone())
+    corrupt_patches = get_patches(initial_guess.clone(), p, s)
 
-    patches = get_patches(initial_guess.clone(), p, s)
+    debug_pairs = [(image, 'image'), (corrupt_image, 'corrupt image')]
+    original_patches = get_patches(image, p, s)
+    for denoiser, name in denoisers:
+        # new_patches = denoiser.denoise(corrupt_patches, 0)
 
-    gmm_denoised = gmm_denoiser.denoise(patches, noise_std)
-    global_nn_denoised = global_nn_denoiser.denoise(patches, 0)
-    local_nn_denoised = local_nn_denoiser.denoise(gmm_denoised, 0)
-    local_nn_denoised_resize = local_nn_denoiser_resize.denoise(gmm_denoised, 0)
+        denoised_patches = denoiser.denoise(corrupt_patches, 0).reshape(-1,16,16)
+        new_patches = corrupt_patches.clone().reshape(-1,16,16)
+        new_patches[:, :8, :8] = denoised_patches[:, :8, :8]
+        new_patches[:, 8:, 8:] = torch.mean(denoised_patches[:, 8:, 8:], dim=(1,2), keepdim=True)
+        new_patches = new_patches.reshape(-1, 16**2)
 
-    gmm_denoised_img = combine_patches(gmm_denoised, p, s, resize)
-    global_nn_denoised_img = combine_patches(global_nn_denoised, p, s, resize)
-    local_nn_denoised_img = combine_patches(local_nn_denoised, p, s, resize)
-    local_nn_denoised_resize_img = combine_patches(local_nn_denoised_resize, p, s, resize)
+        dists = ((new_patches - original_patches)**2)
+        tmp = (combine_patches(new_patches, p, s, resize),
+               f"{name}: avg-dist:{dists.mean():.4f}, exact:{(dists.sum(1) == 0).sum()} / {len(dists)}")
+        debug_pairs.append(tmp)
 
+    show_images(debug_pairs)
 
-    for denoised_patches in [
-        gmm_denoised,
-        global_nn_denoised,
-        local_nn_denoised,
-        local_nn_denoised_resize
-    ]:
-        dists = ((denoised_patches - patches)**2)
-        print(f"Mean dist : {dists.mean()}, N_exact: {torch.all(dists == 0, dim=1).sum()}")
-
-
-    # save_image(gmm_denoised.reshape(-1,3,p,p), "gmm_denoised.png", normalize=True)
-    show_images([
-        (image, 'image'),
-        # (corrupt_image, 'corrupt_image'),
-        # (initial_guess, 'initial_guess'),
-        # (gmm_denoised_img, 'gmm_denoised'),
-        # (global_nn_denoised_img, 'global_nn_denoised_img'),
-        # (local_nn_denoised_img, 'local_nn_denoised_img'),
-        (local_nn_denoised_resize_img, 'local_nn_denoised_resize_img')
-    ])
 
 if __name__ == '__main__':
     replace_by_denoised_patches()
