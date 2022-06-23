@@ -1,28 +1,34 @@
-# import faiss
 import joblib
 import numpy as np
 import torch
-import torchvision
 import torchvision.transforms as tv_t
+import torch.nn.functional as F
+from utils import get_patches
 
 
 class LocalPatchDenoiser:
-    def __init__(self, data_path, patch_size, stride, channels, window_size, img_dim=None, keys_mode=None):
-        print("Loading local priors...")
-        raw_data = joblib.load(data_path)
+    def __init__(self, raw_data, patch_size, stride, window_size, grayscale=True, resize=None, keys_mode=None):
+        print("Local patch Denoiser:")
+        if grayscale:
+            raw_data = torch.mean(raw_data, dim=1, keepdim=True)
+        if resize is not None:
+            raw_data = tv_t.Resize((resize, resize))(raw_data)
+            print("\t(*) data resized")
+        if keys_mode == 'context':
+            hp = patch_size // 4
+            raw_data = F.pad(raw_data, (hp, hp, hp, hp))
+            print("\t(*) data resized")
+            self.window_indices = LocalPatchDenoiser._set_patch_window_indices(resize, patch_size//2, stride, window_size)
+        else:
+            self.window_indices = LocalPatchDenoiser._set_patch_window_indices(resize, patch_size, stride, window_size)
 
-        if stride > 1:
-            strided_indices = LocalPatchDenoiser._get_strided_data(img_dim, patch_size, stride)
-            raw_data = raw_data[strided_indices]
-
-        print("Done...")
-
-        self.window_indices = LocalPatchDenoiser._set_patch_window_indices(img_dim, patch_size, stride, window_size)
+        self.data = F.unfold(raw_data, kernel_size=patch_size, stride=stride).permute(2, 0, 1)  # (#img, d, #patch) -> (#patch, #img, d)
 
         self.priors = []
         for i in np.unique(self.window_indices):
-            local_data = raw_data[self.window_indices == i]
-            self.priors.append(NN_Denoiser(local_data, patch_size, channels, keys_mode))
+            local_data = self.data[self.window_indices == i].reshape(-1, self.data.shape[-1])
+            self.priors.append(NN_Denoiser(local_data, patch_size, raw_data.shape[1], keys_mode))
+        print("\t(*) Local priors loaded")
 
     @staticmethod
     def _set_patch_window_indices(img_dim, patch_size, stride, window_size):
@@ -69,6 +75,37 @@ def efficient_compute_distances(X, Y):
     dist /= d # normalize by size of vector to make dists independent of the size of d ( use same alpha for all patche-sizes)
     return dist
 
+class NN_Denoiser:
+    def __init__(self, data, patch_size, channels, keys_mode=None):
+        self.c = channels
+        self.p = patch_size
+        self.data = data
+        self.keys_mode = keys_mode
+        if keys_mode == 'resize':
+            self.resize = tv_t.Resize((self.p//2, self.p//2), tv_t.InterpolationMode.NEAREST)
+            self.resized_data = self.resize(data.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
+
+        elif keys_mode == 'PCA':
+            self.data_mean = data.mean(0)
+            U, S, V = torch.svd((data - self.data_mean).T @ (data - self.data_mean))
+            k = int(np.sqrt(data.shape[1]))
+            self.projection_matrix = V[:, :k]
+            # import matplotlib.pyplot as plt; plt.plot(np.arange(len(S)), S); plt.show()
+            self.projected_data = (data - self.data_mean) @ self.projection_matrix
+        self.name = f"NN_prior"
+
+    def denoise(self, queries, noise_var):
+        b = 256
+        if self.keys_mode == 'resize':
+            resize_queries = self.resize(queries.reshape(-1, self.c, self.p, self.p)).float().reshape(-1, self.c*(self.p//2)**2)
+            NNs = get_NN_indices_low_memory(resize_queries, self.resized_data.to(resize_queries.device), b=b)
+        elif self.keys_mode == 'PCA':
+            NNs = get_NN_indices_low_memory((queries - self.data_mean) @ self.projection_matrix.to(queries.device), self.projected_data.to(queries.device), b=b)
+        else:
+            NNs = get_NN_indices_low_memory(queries, self.data.to(queries.device), b=b)
+
+        return self.data[NNs].to(queries.device)
+
 
 def get_NN_indices_low_memory(X, Y, b):
     """
@@ -111,41 +148,3 @@ def get_NN_indices_low_memory_2(X, Y, X2, Y2, b):
         NNs[n_batches * b:] = dists.min(1)[1]
     return NNs
 
-
-class NN_Denoiser:
-    def __init__(self, data, patch_size, channels, keys_mode=None):
-        self.c = channels
-        self.p = patch_size
-        if type(data) == str:
-            data = joblib.load(data)
-        data = data.reshape(-1, data.shape[-1])
-        self.data = data
-        self.keys_mode = keys_mode
-        self.resize = tv_t.Resize((self.p//2, self.p//2), tv_t.InterpolationMode.NEAREST)
-        if keys_mode == 'resize':
-            self.resized_data = self.resize(data.reshape(-1, self.c, self.p, self.p)).reshape(-1, self.c*(self.p//2)**2).float()
-
-        elif keys_mode == 'PCA':
-            self.data_mean = data.mean(0)
-            U, S, V = torch.svd((data - self.data_mean).T @ (data - self.data_mean))
-            k = int(np.sqrt(data.shape[1]))
-            self.projection_matrix = V[:, :k]
-            # import matplotlib.pyplot as plt; plt.plot(np.arange(len(S)), S); plt.show()
-            self.projected_data = (data - self.data_mean) @ self.projection_matrix
-            print("Pca done")
-        else:
-            print("NN_Denoiser: NN data Load")
-        self.name = f"NN_prior"
-
-    def denoise(self, queries, noise_var):
-        b = 256
-        if self.keys_mode == 'resize':
-            resize_queries = self.resize(queries.reshape(-1, self.c, self.p, self.p)).float().reshape(-1, self.c*(self.p//2)**2)
-            NNs = get_NN_indices_low_memory(resize_queries, self.resized_data.to(resize_queries.device),
-                                              b=b)
-        elif self.keys_mode == 'PCA':
-            NNs = get_NN_indices_low_memory((queries - self.data_mean) @ self.projection_matrix.to(queries.device), self.projected_data.to(queries.device), b=b)
-        else:
-            NNs = get_NN_indices_low_memory(queries, self.data.to(queries.device), b=b)
-
-        return self.data[NNs].to(queries.device)

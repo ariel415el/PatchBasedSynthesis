@@ -54,10 +54,13 @@ class downsample_operator:
         h, w = x.shape[-2:]
         return torchvision.transforms.Resize((int(h * self.scale_factor), int(w * self.scale_factor)), interpolation=self.down_interpolation)(x)
 
-    def naive_reverse(self, x):
-        h, w = x.shape[-2:]
-
-        return torchvision.transforms.Resize((int(h / self.scale_factor), int(w / self.scale_factor)), interpolation=self.up_interpolation)(x)
+    def naive_reverse(self, x, dim=None):
+        if dim is not None:
+            size = (dim, dim)
+        else:
+            h, w = x.shape[-2:]
+            size = (int(h / self.scale_factor), int(w / self.scale_factor))
+        return torchvision.transforms.Resize(size, interpolation=self.up_interpolation)(x)
 
 
 class RepeteadOperator:
