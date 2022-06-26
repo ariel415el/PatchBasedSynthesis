@@ -41,11 +41,12 @@ def combine_patches_median(patches, patch_size, stride, img_dim):
     return torch.from_numpy(resized_patches)
 
 def replace_by_denoised_patches():
-    p = 8
-    s = 1
+    p = 16
+    s = 16
     resize = 64
     grayscale = True
     noise_std = 1 / 255
+    raw_data = joblib.load(f"../models/saved_models/Frontal_FFHQ_N=5000.joblib")
 
     denoisers = [
         # (NN_Denoiser(f"../models/saved_models/Patches_p={p}_s=1_c=1_R={resize}_N=1000.joblib",
@@ -57,13 +58,12 @@ def replace_by_denoised_patches():
         # (LocalPatchDenoiser(f"../models/saved_models/Patches_p={p}_s=1_c=1_R={resize}_N=1000.joblib",
         #                     p, s, 1, window_size=1, img_dim=resize, keys_mode='resize'),
         #  'local_nn_resize'),
-        (LocalPatchDenoiser(joblib.load(f"../models/saved_models/Frontal_FFHQ_N=5000.joblib"),
-                            p, s, 1, resize=resize, window_size=1, keys_mode=None),
+        (LocalPatchDenoiser(raw_data, p, s, resize=resize, grayscale=grayscale, window_size=1, keys_mode='PCA'),
         'local_nn_PCA'),
     ]
 
-    # image = load_image(os.path.join('../../data/FFHQ_128/', json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[123]), grayscale=grayscale, resize=resize).to(device)
-    image = load_image('../../data/FFHQ_128/69989.png', grayscale=grayscale, resize=resize).to(device)
+    image = load_image(os.path.join('../../data/FFHQ_128/', json.load(open("../top_frontal_facing_FFHQ.txt", 'r'))[123]), grayscale=grayscale, resize=resize).to(device)
+    # image = load_image('../../data/FFHQ_128/69989.png', grayscale=grayscale, resize=resize).to(device)
     H = downsample_operator(0.5)
 
     corrupt_image = iterative_corruption(image, H, noise_std, n_corruptions=1)

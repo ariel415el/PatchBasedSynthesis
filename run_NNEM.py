@@ -1,17 +1,19 @@
 # import json
 # import os
+import json
 
 import joblib
 import torch
 import torchvision.transforms as tv_t
 from tqdm import tqdm
 
-from NN_tailoring import tailor_image
+from EPLL import decorrupt_with_patch_prior_and_callable_H
+from NNEM import tailor_image
 from corruptions import downsample_operator
 from utils import load_image, show_images
 import sys
 sys.path.append("models")
-from models.NN_denoiser import LocalPatchDenoiser
+from models.NN_denoiser import LocalPatchDenoiser, MemoryEfficientLocalPatchDenoiser
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -27,44 +29,52 @@ def iterative_corruption(image, H, noise_std, n_corruptions):
 
 
 def main():
-    noise_std = 0 # 1 / 255
+    noise_std = 1/255
     patch_size = 8
     stride = 1
-    img_dim = 128
-    n_levels = 10
-    pyr_factor = 0.75
+    img_dim = 64
+    n_levels = 3
+    pyr_factor = 0.5
     window_dim = 1
-    grayscale = True
+    grayscale = False
     H = downsample_operator(pyr_factor)
 
     raw_data = joblib.load(f"models/saved_models/Frontal_FFHQ_N=5000.joblib")
 
-    image_path = '../data//FFHQ_128/69989.png'
-    image = load_image(image_path, grayscale=grayscale, resize=img_dim).to(device)
+    # image_path = f'../data/FFHQ_128/{json.load(open("top_frontal_facing_FFHQ.txt", "r"))[123]}'
+    # image_path = '../data//FFHQ_128/67789.png'
+    # image = load_image(image_path, grayscale=grayscale, resize=img_dim).to(device)
 
-    resolutions = []
-    corrupt_image = image.clone()
-    for i in range(n_levels):
-        resolutions = [corrupt_image.shape[-1]] + resolutions
-        corrupt_image = H(corrupt_image)
-    corrupt_image += noise_std * torch.randn_like(corrupt_image, device=corrupt_image.device)
-
+    # resolutions = []
+    # corrupt_image = image.clone()
+    # for i in range(n_levels):
+    #     resolutions = [corrupt_image.shape[-1]] + resolutions
+    #     corrupt_image = H(corrupt_image)
+    # corrupt_image += noise_std * torch.randn_like(corrupt_image, device=corrupt_image.device)
+    #
+    # debug_images = [
+    #     (image, 'input'),
+    #     (corrupt_image, 'corrupt_image'),
+    #     # (H.naive_reverse(corrupt_image), 'initial-guess'),
+    # ]
+    resolutions = [16, 32, 64]
+    gmm = joblib.load(f"models/saved_models/GMM-k=100.joblib")
+    corrupt_image = torch.from_numpy(gmm.sample(1)[0][0].reshape(3,patch_size, patch_size))
     debug_images = [
-        (image, 'input'),
         (corrupt_image, 'corrupt_image'),
-        # (H.naive_reverse(corrupt_image), 'initial-guess'),
     ]
+
     lvl_output = corrupt_image
     for res in resolutions:
         lvl_intitial_guess = H.naive_reverse(lvl_output, res)
-        denoiser = LocalPatchDenoiser(raw_data, patch_size, stride,
-                                      resize=res, grayscale=grayscale, window_size=window_dim, keys_mode='resize')
+        # denoiser = LocalPatchDenoiser(raw_data, patch_size, stride,
+                                      # resize=res, grayscale=grayscale, window_size=1,keys_mode=None)
 
-        lvl_output = tailor_image(lvl_intitial_guess, denoiser, patch_size, stride, n_iters=6, n_g_steps=150)
+        denoiser = MemoryEfficientLocalPatchDenoiser(raw_data, patch_size, stride, resize=res, grayscale=grayscale, keys_mode='resize')
+
+        lvl_output = tailor_image(lvl_intitial_guess, denoiser, patch_size, stride, n_iters=50, n_g_steps=3)
 
         debug_images.append((lvl_output, f"res - {res}"))
-
-    # debug_images.append((tv_t.Resize((resize, resize))(corrupt_image), 'bilinear-upsample'))
 
     nn1 = find_global_nn(lvl_output, tv_t.Resize((img_dim, img_dim))(raw_data))
     debug_images.append((nn1, 'train NN to output'))

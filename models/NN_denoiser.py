@@ -45,16 +45,6 @@ class LocalPatchDenoiser:
 
         return np.array(window_indices)
 
-    @staticmethod
-    def _get_strided_data(img_dim, patch_size, stride):
-        n_patches_with_stride_1 = img_dim - patch_size + 1
-        strided_indices_mask = []
-        for patch_index in range(n_patches_with_stride_1 ** 2):
-            patch_row = patch_index // n_patches_with_stride_1
-            patch_col = patch_index % n_patches_with_stride_1
-            strided_indices_mask.append((patch_row % stride == 0) and (patch_col % stride == 0))
-        return np.array(strided_indices_mask)
-
     def denoise(self, queries, noise_var):
         queries_copy = queries.clone()
         for i in range(len(self.priors)):
@@ -62,18 +52,34 @@ class LocalPatchDenoiser:
         return queries_copy
 
 
-def efficient_compute_distances(X, Y):
-    """
-    Pytorch efficient way of computing distances between all vectors in X and Y, i.e (X[:, None] - Y[None, :])**2
-    Get the nearest neighbor index from Y for each X
-    :param X:  (n1, d) tensor
-    :param Y:  (n2, d) tensor
-    Returns a n2 n1 of indices
-    """
-    dist = (X * X).sum(1)[:, None] + (Y * Y).sum(1)[None, :] - 2.0 * torch.mm(X, torch.transpose(Y, 0, 1))
-    d = X.shape[1]
-    dist /= d # normalize by size of vector to make dists independent of the size of d ( use same alpha for all patche-sizes)
-    return dist
+
+class MemoryEfficientLocalPatchDenoiser:
+    def __init__(self, raw_data, patch_size, stride, grayscale=True, resize=None, keys_mode=None):
+        print("Local patch Denoiser:")
+        if grayscale:
+            raw_data = torch.mean(raw_data, dim=1, keepdim=True)
+        if resize is not None:
+            raw_data = tv_t.Resize((resize, resize))(raw_data)
+            print("\t(*) data resized")
+
+        self.data = raw_data
+
+        self.n_patches_in_dim = (resize - patch_size) // stride + 1
+        self.patch_size = patch_size
+
+    def get_local_data(self, patch_index):
+        row = patch_index // self.n_patches_in_dim
+        col = patch_index % self.n_patches_in_dim
+
+        return self.data[..., row: row + self.patch_size, col: col + self.patch_size].reshape(len(self.data), -1)
+
+    def denoise(self, queries, noise_var):
+        queries_copy = queries.clone()
+        for i in range(len(queries)):
+            local_data = self.get_local_data(i).short()
+            NNs = get_NN_indices_low_memory(queries_copy[i].unsqueeze(0).short(), local_data, b=512)
+            queries_copy[i] = local_data[NNs]
+        return queries_copy
 
 class NN_Denoiser:
     def __init__(self, data, patch_size, channels, keys_mode=None):
@@ -105,6 +111,22 @@ class NN_Denoiser:
             NNs = get_NN_indices_low_memory(queries, self.data.to(queries.device), b=b)
 
         return self.data[NNs].to(queries.device)
+
+
+def efficient_compute_distances(X, Y, r=0.8):
+    """
+    Pytorch efficient way of computing distances between all vectors in X and Y, i.e (X[:, None] - Y[None, :])**2
+    Get the nearest neighbor index from Y for each X
+    :param X:  (n1, d) tensor
+    :param Y:  (n2, d) tensor
+    Returns a n2 n1 of indices
+    """
+    if r == 2:
+        dist = (X * X).sum(1)[:, None] + (Y * Y).sum(1)[None, :] - 2.0 * torch.mm(X, torch.transpose(Y, 0, 1))
+    else:
+        dist = torch.norm(X[:, None] - Y[None,], p=r, dim=-1)
+    dist /= X.shape[1]  # normalize by size of vector to make dists independent of the size of d ( use same alpha for all patche-sizes)
+    return dist
 
 
 def get_NN_indices_low_memory(X, Y, b):

@@ -25,11 +25,6 @@ def decorrupt_with_patch_prior_and_callable_H(corrupt_image, initial_guess, corr
         pbar.set_description(f'beta={beta}')
         z = get_patches(x, patch_size, stride=stride)
 
-        # Denoise by channel (Assumes patch order is 3,p,p
-        # z = z.reshape(len(z), 3, -1)
-        # z = torch.stack([patch_denoiser.denoise(z[:,i], 1 / beta) for i in range(3)], dim=1)
-        # z = z.reshape(len(z), -1)
-
         z = patch_denoiser.denoise(z, 1 / beta)
 
         def aggregation_loss(X):

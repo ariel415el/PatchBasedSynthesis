@@ -1,6 +1,7 @@
 import json
 import os
 
+import joblib
 import torch
 import torchvision.transforms as tv_t
 from matplotlib import pyplot as plt
@@ -28,17 +29,19 @@ def main():
     noise_std = 1 / 255
     alpha = 1 / 50
     betas = [min(2 ** i / alpha, 3000) for i in range(6)]
-    patch_size = 16
+    patch_size = 8
     stride = 1
-    n_levels = 1
+    n_levels = 3
     img_dim = 64
     window_dim = 1
     grayscale = True
-
     # H = blur_operator(15, 2)
     H = downsample_operator(0.5)
-    # image_path = os.path.join('../data//FFHQ_128/', json.load(open("top_frontal_facing_FFHQ.txt", 'r'))[123])
-    image_path = '../data//FFHQ_128/69989.png'
+
+    raw_data = joblib.load(f"models/saved_models/Frontal_FFHQ_N=5000.joblib")
+
+    # image_path = '../data//FFHQ_128/69989.png'
+    image_path = f'../data/FFHQ_128/{json.load(open("top_frontal_facing_FFHQ.txt", "r"))[123]}'
     image = load_image(image_path, grayscale=grayscale, resize=img_dim).to(device)
 
     corrupt_image = iterative_corruption(image, H, noise_std, n_corruptions=n_levels)
@@ -51,13 +54,8 @@ def main():
         # denoiser = GMMDenoiser.load_from_file(f"models/saved_models/GMM(R={resolution}_k=10_(p=8_N=100xNone{'_1C' if grayscale else ''}).joblib", device=device, MAP=True)
         # denoiser = NN_Denoiser.load_from_file(f"models/saved_models/NN_prior_p=8_c={1 if grayscale else 3}_R={resolution}_N=100xNone.joblib")
 
-        denoiser = LocalPatchDenoiser(f"models/saved_models/Patches"
-                                      f"_p={patch_size}_s=1"
-                                      f"_c={1 if grayscale else 3}"
-                                      f"_R={resolution}"
-                                      f"_N={1000 if resolution == 128 else 1000}.joblib",
-                                        patch_size, stride, 1, window_dim, img_dim=resolution,
-                                      keys_mode='PCA')
+        denoiser = LocalPatchDenoiser(raw_data, patch_size, stride,
+                                      resize=resolution, grayscale=grayscale, window_size=window_dim, keys_mode='PCA')
 
         lvl_intitial_guess = H.naive_reverse(tmp_img)
 
