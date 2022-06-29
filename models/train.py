@@ -6,7 +6,7 @@ import joblib
 from sklearn import mixture
 
 sys.path.append(os.path.dirname(__file__))
-from utils import load_image
+from utils.image import load_image
 import json
 import torchvision.transforms as tv_t
 
