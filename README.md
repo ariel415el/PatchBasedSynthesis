@@ -29,3 +29,26 @@ and starting from a 8x8 GMM sample
 ![](readme_images/NNEM_from_GMM_sample_1.png)
 ![](readme_images/NNEM_from_GMM_sample_2.png)
 Both methods can be run through the main script
+
+
+# cite
+```
+@article{ren2017example,
+  title={Example-based image synthesis via randomized patch-matching},
+  author={Ren, Yi and Romano, Yaniv and Elad, Michael},
+  journal={IEEE Transactions On Image Processing},
+  volume={27},
+  number={1},
+  pages={220--235},
+  year={2017},
+  publisher={IEEE}
+}
+
+@incollection{kwatra2005texture,
+  title={Texture optimization for example-based synthesis},
+  author={Kwatra, Vivek and Essa, Irfan and Bobick, Aaron and Kwatra, Nipun},
+  booktitle={ACM SIGGRAPH 2005 Papers},
+  pages={795--802},
+  year={2005}
+}
+```
