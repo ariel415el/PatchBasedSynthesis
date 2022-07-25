@@ -52,7 +52,7 @@ class downsample_operator:
 
     def __call__(self, x):
         h, w = x.shape[-2:]
-        return torchvision.transforms.Resize((int(h * self.scale_factor), int(w * self.scale_factor)), interpolation=self.down_interpolation)(x)
+        return torchvision.transforms.Resize((int(h * self.scale_factor), int(w * self.scale_factor)), interpolation=self.down_interpolation, antialias=True)(x)
 
     def naive_reverse(self, x, dim=None):
         if dim is not None:

@@ -1,4 +1,5 @@
 import itertools
+import os
 
 import numpy as np
 import torch
@@ -23,6 +24,7 @@ def plot_img(axs, img, name):
 
 
 def show_images(images_and_names, path=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     fig, axs = plt.subplots(1, len(images_and_names), dpi=200, figsize=(2*len(images_and_names),2))
     for i, (image, name) in enumerate(images_and_names):
         plot_img(axs[i], image, name)
@@ -78,7 +80,7 @@ def find_nn(img, data, row_interval, col_interval):
 
     return np.argsort(dists)
 
-def find_crop_nns(query_image, raw_data, device):
+def find_crop_nns(query_image, raw_data):
     # Debug: show VGG NN
     img_dim = query_image.shape[-1]
     NN_images = []
@@ -90,7 +92,7 @@ def find_crop_nns(query_image, raw_data, device):
     all_pairs_of_slices = itertools.product(all_slices, repeat=2)
     for i, (row_interval, col_interval) in enumerate(all_pairs_of_slices):
         nn_indices = find_nn(query_image, raw_data_subset, row_interval, col_interval)
-        # nn_indices = find_neural_nn(query_image, raw_data_subset, row_interval, col_interval, device)
+        # nn_indices = find_neural_nn(query_image, raw_data_subset, row_interval, col_interval, raw_data.device)
         nn = raw_data_subset[nn_indices[0]].clone() * 0.5
         nn[:, row_interval[0]:row_interval[1], col_interval[0]: col_interval[1]] *= 2
         NN_images.append((nn, f'crop vgg {(row_interval, col_interval)} -NN'))

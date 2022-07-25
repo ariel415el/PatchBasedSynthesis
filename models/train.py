@@ -26,8 +26,7 @@ def train_low_res_GMM(data, n_components, grayscale=False, img_dim=8):
     #                         mu=torch.from_numpy(gmm.means_),
     #                         sigma=torch.from_numpy(gmm.covariances_), device=torch.device('cpu'))
 
-    joblib.dump(gmm, f"saved_models/GMM-k={n_components}.joblib")
-
+    joblib.dump(gmm, f"saved_models/GMM-k={n_components}_r={img_dim}.joblib")
 
 
 def get_data(image_paths, grayscale=False, resize=None):
@@ -49,4 +48,4 @@ if __name__ == '__main__':
     # joblib.dump(data, f"saved_models/Frontal_FFHQ_N={n_images}.joblib")
 
     data = joblib.load("saved_models/Frontal_FFHQ_N=5000.joblib")
-    train_low_res_GMM(data, 100, grayscale=False)
+    train_low_res_GMM(data, n_components=100, grayscale=False, img_dim=8)

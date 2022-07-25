@@ -1,7 +1,14 @@
-import torch
 from tqdm import tqdm
 
-from utils import get_patches
+import torch
+import sys
+
+from corruptions import downsample_operator
+from utils.image import get_patches
+sys.path.append("models")
+from models.NN_denoiser import LocalPatchDenoiser, NN_Denoiser, MemoryEfficientLocalPatchDenoiser
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def optimize_image(x, loss_func, its, lr=1e-2):
@@ -35,4 +42,26 @@ def decorrupt_with_patch_prior_and_callable_H(corrupt_image, initial_guess, corr
         x = optimize_image(x, aggregation_loss, its=150)
 
     return x
+
+
+def MS_EPLL(initial_image, raw_data, resolutions, patch_size, stride, betas, noise_std, grayscale=False, keys_mode=None):
+    assert initial_image.shape[-1] == initial_image.shape[-2]
+
+    debug_images = [(initial_image, "init")]
+    lvl_output = initial_image.clone()
+    for res in resolutions:
+        H_full = downsample_operator(initial_image.shape[-1] / res)
+        H = downsample_operator(lvl_output.shape[-1] / res)
+
+        denoiser = MemoryEfficientLocalPatchDenoiser(raw_data, patch_size, stride,
+                                      resize=res, grayscale=grayscale, keys_mode=keys_mode)
+
+        lvl_intitial_guess = H.naive_reverse(lvl_output)
+        lvl_output = decorrupt_with_patch_prior_and_callable_H(initial_image, lvl_intitial_guess, H_full,
+                                                            noise_std, denoiser, betas, patch_size, stride)
+        debug_images.append((lvl_output, f"res - {res}"))
+
+    return lvl_output, debug_images
+
+
 

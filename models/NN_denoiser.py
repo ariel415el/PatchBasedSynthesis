@@ -27,6 +27,7 @@ class LocalPatchDenoiser:
     def denoise(self, queries, noise_var):
         queries_copy = queries.clone()
         for i in range(len(self.priors)):
+
             queries_copy[i] = self.priors[i].denoise(queries_copy[i].unsqueeze(0), None)
         return queries_copy
 
